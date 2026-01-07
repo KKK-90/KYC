@@ -36,12 +36,15 @@
       <div class="table-tools">
         <input class="search" id="actionsSearch" placeholder="Search action items..." />
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button class="btn btn--ghost" id="btnDownloadActionsCsv">Download Actions CSV</button>
+          <button class="btn btn--ghost" id="btnDownloadActionsCsv" type="button">Download Actions CSV</button>
+          <a class="btn" href="upload.html" style="display:inline-flex; align-items:center;">Upload / Import</a>
         </div>
       </div>
 
       <!-- TOP scrollbar -->
-      <div class="scrollbar-top" id="actionsTopScroll"><div class="scrollbar-inner" id="actionsTopInner"></div></div>
+      <div class="scrollbar-top" id="actionsTopScroll">
+        <div class="scrollbar-inner" id="actionsTopInner"></div>
+      </div>
 
       <div class="table-wrap" id="actionsWrap">
         <table id="actionsTable">
@@ -49,12 +52,9 @@
           <tbody></tbody>
         </table>
       </div>
-    </section>
 
-    <section class="panel">
-      <div class="panel__title">How Action Items are formed</div>
-      <div class="muted" style="margin-top:10px; line-height:1.6;">
-        Rows appear here if any of these are present: Pending Scan/Upload, Missing Consignment, Omissions/Rejections, Missing CIF, Missing Account Name.
+      <div class="muted" style="margin-top:10px; font-size:12px;">
+        Rows are flagged if: Pending Scan/Upload, Missing Consignment, Omissions/Rejections, Missing CIF, Missing Account Name.
       </div>
     </section>
 
@@ -63,10 +63,9 @@
 
   <footer class="footer">
     <span class="line">© North Karnataka Region — KYC Tool</span>
-    <span class="line">Action items are derived from uploaded dataset</span>
+    <span class="line">Hosted on GitHub Pages • Domain: kyc.nkr-ka.in</span>
   </footer>
 
   <script src="assets/app.js"></script>
 </body>
 </html>
-
