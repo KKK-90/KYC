@@ -1,6 +1,6 @@
 /* NKR-KA KYC Tool — Browser-only static app (GitHub Pages ready)
    Includes:
-   1) Download Standard Template (prevents header mismatch)
+   1) Download Standard Template (with Instructions sheet)
    2) Auto-detect header row (handles title rows / merged headings)
 */
 
@@ -105,8 +105,7 @@ function findHeaderRowIndex(rowsAOA, scanRows = 30) {
     }
   }
 
-  // Require a minimum match threshold (prevents accidental matches)
-  // We expect all 16, but accept >= 10 to allow cases where some headers are blank/merged.
+  // Minimum threshold to avoid false matches
   if (bestIdx >= 0 && bestScore >= 10) {
     return {
       headerRowIndex: bestIdx,
@@ -229,7 +228,47 @@ function countDuplicates(values) {
   return dup;
 }
 
-/* ---------- Standard Template Download ---------- */
+/* ---------- Standard Template Download (with Instructions sheet) ---------- */
+
+function buildInstructionsSheetAOA() {
+  // Two-column layout for easy reading
+  const rows = [];
+
+  rows.push(["NKR KYC Standard Template — Instructions", ""]);
+  rows.push(["", ""]);
+  rows.push(["How to use", "1) Do NOT rename headers. 2) Paste data starting from row 2 in 'KYC_Data'. 3) Save as .xlsx and upload in the tool."]);
+  rows.push(["Important", "Do not add extra rows above headers. Do not merge header cells. Keep one record per row."]);
+  rows.push(["Date format", "Use DD-MM-YYYY or DD/MM/YYYY (recommended)."]);
+  rows.push(["", ""]);
+
+  rows.push(["Recommended values (Status)", "Use consistent values such as: Active / Inactive / Closed / Frozen / Pending (as applicable)."]);
+  rows.push(["Recommended values (Scan/Upload status)", "Use: Done / Pending. (Avoid multiple spellings; keep consistent.)"]);
+  rows.push(["Omissions/Rejections", "If any issue: mention brief reason (e.g., 'CIF mismatch', 'Document missing', 'Name mismatch'). Leave blank if none."]);
+  rows.push(["", ""]);
+
+  rows.push(["Column guide", ""]);
+  rows.push(["Rgn Sl No", "Region serial number (if applicable)."]);
+  rows.push(["Dvn Sl No", "Division serial number (if applicable)."]);
+  rows.push(["sol_id", "SOL/Branch/Office identifier."]);
+  rows.push(["Office", "Office name."]);
+  rows.push(["Division", "Division name."]);
+  rows.push(["Account No", "Account number (prefer full number, no spaces)."]);
+  rows.push(["cif_id", "CIF ID (if available)."]);
+  rows.push(["acct_name", "Account holder name (as per CBS)."]);
+  rows.push(["schm_code", "Scheme code (as per CBS)."]);
+  rows.push(["acct_opn_date", "Account opening date."]);
+  rows.push(["last_any_tran_date", "Last transaction date (any transaction)."]);
+  rows.push(["Status", "Account status / KYC status as per your workflow."]);
+  rows.push(["Consignment number", "Consignment/dispatch number (if submitted)."]);
+  rows.push(["Date of submission to CPC", "Date the case/file submitted to CPC."]);
+  rows.push(["Scan/Upload status", "Done / Pending (recommended)."]);
+  rows.push(["Omissions/Rejections", "Any omission/rejection remarks; blank if none."]);
+  rows.push(["", ""]);
+
+  rows.push(["Do / Don't (Quick)", "DO: Keep headers unchanged | DO: Keep one row per account | DON'T: rename headers | DON'T: add top title rows | DON'T: merge header cells"]);
+
+  return rows;
+}
 
 function downloadStandardTemplate() {
   if (typeof XLSX === "undefined") {
@@ -237,25 +276,31 @@ function downloadStandardTemplate() {
     return;
   }
 
-  // Row 1 = headers; Row 2 = blank sample row
-  const aoa = [
+  // Sheet 1: Data
+  const dataAOA = [
     EXPECTED_HEADERS,
-    EXPECTED_HEADERS.map(() => "")
+    EXPECTED_HEADERS.map(() => "") // one blank example row
   ];
+  const wsData = XLSX.utils.aoa_to_sheet(dataAOA);
+  wsData["!cols"] = EXPECTED_HEADERS.map(h => ({ wch: Math.max(12, Math.min(32, h.length + 2)) }));
 
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  // Freeze top row (best effort)
+  wsData["!freeze"] = { xSplit: 0, ySplit: 1 };
 
-  // Make header bold + freeze top row (best-effort; styling support varies)
-  // Column widths (optional)
-  ws["!cols"] = EXPECTED_HEADERS.map(h => ({ wch: Math.max(12, Math.min(32, h.length + 2)) }));
+  // Sheet 2: Instructions
+  const instructionsAOA = buildInstructionsSheetAOA();
+  const wsInst = XLSX.utils.aoa_to_sheet(instructionsAOA);
+  wsInst["!cols"] = [{ wch: 28 }, { wch: 80 }];
+  wsInst["!freeze"] = { xSplit: 0, ySplit: 1 };
 
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "KYC_Data");
+  XLSX.utils.book_append_sheet(wb, wsData, "KYC_Data");
+  XLSX.utils.book_append_sheet(wb, wsInst, "Instructions");
 
   const filename = `NKR_KYC_Standard_Template.xlsx`;
   XLSX.writeFile(wb, filename);
 
-  showAlert("Standard template downloaded. Fill it and upload for processing.", "ok");
+  showAlert("Standard template downloaded (with Instructions sheet). Fill 'KYC_Data' and upload.", "ok");
 }
 
 /* ---------- Upload & Parse ---------- */
@@ -275,14 +320,15 @@ async function handleFile(file) {
 
   const arrayBuffer = await file.arrayBuffer();
   const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
-  const firstSheetName = wb.SheetNames[0];
-  const ws = wb.Sheets[firstSheetName];
 
-  // Read sheet as AOA to locate header row anywhere in top section
+  // Prefer sheet named "KYC_Data" if present (from our standard template)
+  const sheetName = wb.SheetNames.includes("KYC_Data") ? "KYC_Data" : wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+
   const rowsAOA = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" });
 
   if (!rowsAOA.length) {
-    showAlert("No rows found in the first sheet.", "bad");
+    showAlert("No rows found in the sheet.", "bad");
     return;
   }
 
@@ -298,24 +344,20 @@ async function handleFile(file) {
   const headerRowIndex = found.headerRowIndex;
   const headerRow = found.headerRowValues;
 
-  // Validate headers strictly (after normalization)
   const v = validateHeaderRow(headerRow);
   if (!v.ok) {
     showAlert(
-      `Header validation failed. Missing headers: ${v.missing.join(", ")}. ` +
-      `Please use 'Download Standard Template' to avoid mismatch.`,
+      `Header validation failed. Missing headers: ${v.missing.join(", ")}. Please use 'Download Standard Template' to avoid mismatch.`,
       "bad"
     );
     return;
   }
 
-  // Convert to JSON using the detected header row as keys
-  // We rebuild a "sub-sheet" that starts at the header row
+  // Rebuild sheet starting at detected header row
   const trimmedAOA = rowsAOA.slice(headerRowIndex);
   const tempWs = XLSX.utils.aoa_to_sheet(trimmedAOA);
   const json = XLSX.utils.sheet_to_json(tempWs, { defval: "" });
 
-  // Normalize into canonical keys exactly as EXPECTED_HEADERS
   rawRows = json.map((r) => {
     const obj = {};
     for (const h of EXPECTED_HEADERS) obj[h] = normalizeValue(r[h]);
@@ -337,7 +379,7 @@ async function handleFile(file) {
 
   setDataChip(`Loaded: ${file.name} • Rows: ${rawRows.length}`);
   showAlert(
-    `Template validated successfully. Loaded ${rawRows.length} rows. (Header row detected at line ${headerRowIndex + 1})`,
+    `Template validated successfully. Loaded ${rawRows.length} rows. (Sheet: ${sheetName}, header at row ${headerRowIndex + 1})`,
     "ok"
   );
 
@@ -477,7 +519,7 @@ function renderKPIs(rows, f) {
   const kpis = [
     { label: `${modeLabel} • Total Rows`, value: total, sub: "After filters" },
     { label: "Submitted (has submission date)", value: submitted, sub: "Based on ‘Date of submission to CPC’" },
-    { label: "Scan/Upload Done", value: doneScan, sub: "Auto-detected synonyms: done/completed/uploaded..." },
+    { label: "Scan/Upload Done", value: doneScan, sub: "Auto-detected: done/completed/uploaded..." },
     { label: "Pending Scan/Upload", value: pendingScan, sub: "Submitted but not ‘Done’" },
 
     { label: "Missing Consignment", value: missingConsignment, sub: "Among submitted" },
@@ -675,6 +717,7 @@ function buildOrUpdateChart(existing, canvasId, type, data) {
 
 function renderCharts(rows, f) {
   const basis = f.dateBasis;
+
   const dated = rows
     .map(r => r.__dates[basis] ? { d: fmtDateISO(r.__dates[basis]) } : null)
     .filter(Boolean);
@@ -788,7 +831,9 @@ function wireEvents() {
     }
   });
 
-  el("btnDownloadTemplate").addEventListener("click", () => downloadStandardTemplate());
+  // This button exists in your updated index.html
+  const btnTpl = el("btnDownloadTemplate");
+  if (btnTpl) btnTpl.addEventListener("click", () => downloadStandardTemplate());
 
   el("btnApply").addEventListener("click", () => applyFiltersAndRender());
 
@@ -824,4 +869,7 @@ function wireEvents() {
 }
 
 wireEvents();
-document.querySelector('.tab[data-tab="kpis"]').classList.add("active");
+
+// Default active tab
+const defaultTab = document.querySelector('.tab[data-tab="kpis"]');
+if (defaultTab) defaultTab.classList.add("active");
