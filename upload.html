@@ -38,21 +38,14 @@
         <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
           <input type="file" id="fileInput" accept=".xlsx,.xls" />
           <button class="btn btn--ghost" id="btnDownloadTemplate">Download Standard Template</button>
-          <button class="btn" id="btnGoDashboard">Go to Dashboard</button>
+          <button class="btn" id="btnGoDashboard" type="button">Go to Dashboard</button>
         </div>
 
         <div class="uploader__help">
-          Processing happens in your browser. After upload, your data is saved locally and available in Dashboard / Action Items / Data pages.
+          Processing happens in your browser. After upload, data is saved locally and available in all pages.
         </div>
 
         <div class="alert hidden" id="alertBox"></div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel__title">Quick Notes</div>
-      <div class="muted" style="margin-top:10px; line-height:1.6;">
-        • Don’t rename headers. • One record per row. • Prefer DD-MM-YYYY. • Use Scan/Upload status as <b>Done</b> or <b>Pending</b>.
       </div>
     </section>
   </main>
@@ -65,4 +58,3 @@
   <script src="assets/app.js"></script>
 </body>
 </html>
-
