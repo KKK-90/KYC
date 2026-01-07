@@ -1,1 +1,68 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KYC | Upload</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+</head>
+
+<body class="page" data-page="upload">
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div class="brand">
+        <div class="brand__title">NORTH KARNATAKA REGION</div>
+        <div class="brand__subtitle">KYC Monitoring Tool</div>
+      </div>
+
+      <div class="nav">
+        <a class="active" href="upload.html">Upload</a>
+        <a href="dashboard.html">Dashboard</a>
+        <a href="actions.html">Action Items</a>
+        <a href="data.html">Data</a>
+        <span class="chip" id="dataChip">No data loaded</span>
+        <button class="btn btn--ghost btn--small" id="themeToggle">Light/Dark</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div class="panel__title">
+        <span>Upload / Import (Excel)</span>
+        <span class="muted">Use Standard Template to avoid header issues</span>
+      </div>
+
+      <div class="uploader">
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <input type="file" id="fileInput" accept=".xlsx,.xls" />
+          <button class="btn btn--ghost" id="btnDownloadTemplate">Download Standard Template</button>
+          <button class="btn" id="btnGoDashboard">Go to Dashboard</button>
+        </div>
+
+        <div class="uploader__help">
+          Processing happens in your browser. After upload, your data is saved locally and available in Dashboard / Action Items / Data pages.
+        </div>
+
+        <div class="alert hidden" id="alertBox"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel__title">Quick Notes</div>
+      <div class="muted" style="margin-top:10px; line-height:1.6;">
+        • Don’t rename headers. • One record per row. • Prefer DD-MM-YYYY. • Use Scan/Upload status as <b>Done</b> or <b>Pending</b>.
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span class="line">© North Karnataka Region — KYC Tool</span>
+    <span class="line">Hosted on GitHub Pages • Domain: kyc.nkr-ka.in</span>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
 
