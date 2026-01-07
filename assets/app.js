@@ -1,368 +1,260 @@
-/* NKR-KA KYC Tool — Browser-only static app (GitHub Pages ready)
-   Includes:
-   1) Download Standard Template (with Instructions sheet)
-   2) Auto-detect header row (handles title rows / merged headings)
+/* NKR-KA KYC Tool — Multi-page static app (GitHub Pages)
+   Pages: upload.html, dashboard.html, actions.html, data.html
+   Storage: localStorage (dataset + edits + theme)
 */
 
+const STORAGE_KEY = "kyc_dataset_v1";
+const THEME_KEY = "kyc_theme";
+
 const EXPECTED_HEADERS = [
-  "Rgn Sl No",
-  "Dvn Sl No",
-  "sol_id",
-  "Office",
-  "Division",
-  "Account No",
-  "cif_id",
-  "acct_name",
-  "schm_code",
-  "acct_opn_date",
-  "last_any_tran_date",
-  "Status",
-  "Consignment number",
-  "Date of submission to CPC",
-  "Scan/Upload status",
-  "Omissions/Rejections"
+  "Rgn Sl No","Dvn Sl No","sol_id","Office","Division","Account No","cif_id","acct_name",
+  "schm_code","acct_opn_date","last_any_tran_date","Status","Consignment number",
+  "Date of submission to CPC","Scan/Upload status","Omissions/Rejections"
+];
+
+const ACTION_COLS = [
+  "Division","Office","sol_id","Account No","Date of submission to CPC",
+  "Scan/Upload status","Consignment number","Omissions/Rejections","Flags"
 ];
 
 const el = (id) => document.getElementById(id);
 
 let rawRows = [];
 let filteredRows = [];
+let actionRows = [];
 let charts = { trend: null, division: null, scan: null };
 
-// Safety check: if the XLSX library didn't load, file upload will fail.
-if (typeof XLSX === "undefined") {
-  console.error("XLSX library not loaded. Check script tag / CDN / network policy.");
+function pageName(){ return document.body?.dataset?.page || ""; }
+
+/* ---------------- Theme ---------------- */
+
+function applyThemeFromStorage(){
+  const t = localStorage.getItem(THEME_KEY) || "dark";
+  document.documentElement.setAttribute("data-theme", t);
+}
+function toggleTheme(){
+  const cur = document.documentElement.getAttribute("data-theme") || "dark";
+  const next = cur === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY, next);
+  document.documentElement.setAttribute("data-theme", next);
 }
 
-/* ---------- UI helpers ---------- */
+/* ---------------- Alerts / chips ---------------- */
 
-function showAlert(msg, type = "ok") {
+function showAlert(msg, type="ok"){
   const box = el("alertBox");
-  box.classList.remove("hidden", "alert--ok", "alert--warn", "alert--bad");
+  if(!box) return;
+  box.classList.remove("hidden","alert--ok","alert--warn","alert--bad");
   box.classList.add(`alert--${type}`);
   box.textContent = msg;
 }
-
-function clearAlert() {
+function clearAlert(){
   const box = el("alertBox");
+  if(!box) return;
   box.classList.add("hidden");
   box.textContent = "";
 }
-
-function setDataChip(text) {
-  el("dataChip").textContent = text;
+function setDataChipText(){
+  const chip = el("dataChip");
+  if(!chip) return;
+  if(!rawRows.length) chip.textContent = "No data loaded";
+  else chip.textContent = `Rows: ${rawRows.length}`;
 }
 
-function setVisible(id, visible) {
-  const node = el(id);
-  if (!node) return;
-  node.classList.toggle("hidden", !visible);
+/* ---------------- Storage ---------------- */
+
+function saveDataset(rows){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+}
+function loadDataset(){
+  try{
+    const s = localStorage.getItem(STORAGE_KEY);
+    if(!s) return [];
+    const rows = JSON.parse(s);
+    return Array.isArray(rows) ? rows : [];
+  }catch{
+    return [];
+  }
+}
+function resetDataset(){
+  localStorage.removeItem(STORAGE_KEY);
 }
 
-function normalizeValue(v) {
-  if (v === null || v === undefined) return "";
-  if (typeof v === "string") return v.trim();
+/* ---------------- Normalization / parsing ---------------- */
+
+function normalizeValue(v){
+  if(v === null || v === undefined) return "";
+  if(typeof v === "string") return v.trim();
   return String(v).trim();
 }
-
-/* ---------- Header normalization + auto-detect ---------- */
-
-function normHeader(s) {
+function normHeader(s){
   return String(s ?? "")
-    .replace(/\u00A0/g, " ")     // NBSP -> space
-    .replace(/\r?\n/g, " ")      // newlines -> space
-    .replace(/\s+/g, " ")        // collapse spaces
+    .replace(/\u00A0/g, " ")
+    .replace(/\r?\n/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
-
-function countHeaderMatches(rowValues) {
-  const set = new Set(rowValues.map(normHeader).filter(Boolean));
-  let matched = 0;
-  for (const h of EXPECTED_HEADERS) {
-    if (set.has(normHeader(h))) matched++;
-  }
-  return matched;
+function validateHeaderRow(headerRow){
+  const detected = new Set(headerRow.map(normHeader).filter(Boolean));
+  const missing = EXPECTED_HEADERS.filter(h => !detected.has(normHeader(h)));
+  return { ok: missing.length===0, missing };
 }
-
-/**
- * Finds the header row index by scanning top N rows
- * Returns {headerRowIndex, headerRowValues} or null
- */
-function findHeaderRowIndex(rowsAOA, scanRows = 30) {
-  let bestIdx = -1;
-  let bestScore = -1;
-
+function countHeaderMatches(rowValues){
+  const set = new Set(rowValues.map(normHeader).filter(Boolean));
+  let m=0;
+  for(const h of EXPECTED_HEADERS) if(set.has(normHeader(h))) m++;
+  return m;
+}
+function findHeaderRowIndex(rowsAOA, scanRows=30){
+  let bestIdx=-1, bestScore=-1;
   const max = Math.min(rowsAOA.length, scanRows);
-  for (let i = 0; i < max; i++) {
-    const row = (rowsAOA[i] || []).map(v => normalizeValue(v)).filter(v => v !== "");
-    if (!row.length) continue;
-
+  for(let i=0;i<max;i++){
+    const row = (rowsAOA[i]||[]).map(v=>normalizeValue(v)).filter(v=>v!=="");
+    if(!row.length) continue;
     const score = countHeaderMatches(row);
-    if (score > bestScore) {
-      bestScore = score;
-      bestIdx = i;
-    }
+    if(score>bestScore){ bestScore=score; bestIdx=i; }
   }
-
-  // Minimum threshold to avoid false matches
-  if (bestIdx >= 0 && bestScore >= 10) {
-    return {
-      headerRowIndex: bestIdx,
-      headerRowValues: (rowsAOA[bestIdx] || []).map(v => normalizeValue(v))
-    };
+  if(bestIdx>=0 && bestScore>=10){
+    return { headerRowIndex: bestIdx, headerRowValues: (rowsAOA[bestIdx]||[]).map(v=>normalizeValue(v)) };
   }
   return null;
 }
 
-function validateHeaderRow(actualHeaderRow) {
-  const detectedSet = new Set(actualHeaderRow.map(normHeader).filter(Boolean));
-  const missing = EXPECTED_HEADERS.filter(h => !detectedSet.has(normHeader(h)));
-  return { ok: missing.length === 0, missing };
-}
+function parseAnyDate(v){
+  if(v === null || v === undefined || v === "") return null;
 
-/* ---------- Date parsing ---------- */
-
-function parseAnyDate(v) {
-  if (v === null || v === undefined || v === "") return null;
-
-  if (typeof v === "number") {
+  // numeric excel date
+  if(typeof v === "number" && typeof XLSX !== "undefined"){
     const d = XLSX.SSF.parse_date_code(v);
-    if (!d) return null;
-    return new Date(d.y, d.m - 1, d.d);
+    if(!d) return null;
+    return new Date(d.y, d.m-1, d.d);
   }
 
   const s = String(v).trim();
-  if (!s) return null;
+  if(!s) return null;
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-    const d = new Date(s + "T00:00:00");
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)){
+    const d = new Date(s+"T00:00:00");
     return isNaN(d.getTime()) ? null : d;
   }
 
   const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if (m) {
-    let dd = parseInt(m[1], 10);
-    let mm = parseInt(m[2], 10);
-    let yy = parseInt(m[3], 10);
-    if (yy < 100) yy += 2000;
-    const d = new Date(yy, mm - 1, dd);
+  if(m){
+    let dd = parseInt(m[1],10);
+    let mm = parseInt(m[2],10);
+    let yy = parseInt(m[3],10);
+    if(yy < 100) yy += 2000;
+    const d = new Date(yy, mm-1, dd);
     return isNaN(d.getTime()) ? null : d;
   }
 
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
-
-function fmtDateISO(d) {
-  if (!d) return "";
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+function fmtDateISO(d){
+  if(!d) return "";
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,"0");
+  const day=String(d.getDate()).padStart(2,"0");
   return `${y}-${m}-${day}`;
 }
-
-function startOfDay(d) {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-
-function inRange(d, from, to) {
-  if (!d) return false;
+function startOfDay(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function inRange(d, from, to){
+  if(!d) return false;
   const t = startOfDay(d).getTime();
-  if (from && t < startOfDay(from).getTime()) return false;
-  if (to && t > startOfDay(to).getTime()) return false;
+  if(from && t < startOfDay(from).getTime()) return false;
+  if(to && t > startOfDay(to).getTime()) return false;
   return true;
 }
-
-function toLower(s) {
-  return String(s || "").trim().toLowerCase();
-}
-
-function isDoneScan(v) {
+function hasText(v){ return String(v||"").trim().length>0; }
+function toLower(s){ return String(s||"").trim().toLowerCase(); }
+function isDoneScan(v){
   const s = toLower(v);
-  return ["done", "completed", "complete", "uploaded", "scanned", "ok", "yes"].some(k => s.includes(k));
+  return ["done","completed","complete","uploaded","scanned","ok","yes"].some(k=>s.includes(k));
 }
 
-function hasText(v) {
-  return String(v || "").trim().length > 0;
-}
+/* ---------------- Template download (Data + Instructions) ---------------- */
 
-function uniq(arr) {
-  return [...new Set(arr)];
-}
-
-function countBy(rows, keyFn) {
-  const map = new Map();
-  for (const r of rows) {
-    const k = keyFn(r);
-    map.set(k, (map.get(k) || 0) + 1);
+function buildInstructionsAOA(){
+  const rows=[];
+  rows.push(["NKR KYC Standard Template — Instructions",""]);
+  rows.push(["How to use","1) Don’t rename headers  2) Fill data in KYC_Data from row 2  3) Save .xlsx  4) Upload"]);
+  rows.push(["Date format","Use DD-MM-YYYY or DD/MM/YYYY (recommended)."]);
+  rows.push(["Scan/Upload status","Use: Done / Pending (recommended)."]);
+  rows.push(["Omissions/Rejections","Write brief reason; leave blank if none."]);
+  rows.push(["",""]);
+  rows.push(["Column guide",""]);
+  for(const h of EXPECTED_HEADERS){
+    rows.push([h,"(Fill as applicable)"]);
   }
-  return map;
-}
-
-function groupBy(rows, keyFn) {
-  const m = new Map();
-  for (const r of rows) {
-    const k = normalizeValue(keyFn(r)) || "(Blank)";
-    if (!m.has(k)) m.set(k, []);
-    m.get(k).push(r);
-  }
-  return m;
-}
-
-function topNCount(rows, keyFn, n = 5) {
-  const m = new Map();
-  for (const r of rows) {
-    const k = normalizeValue(keyFn(r));
-    if (!k) continue;
-    m.set(k, (m.get(k) || 0) + 1);
-  }
-  return [...m.entries()].map(([k, v]) => ({ k, v })).sort((a, b) => b.v - a.v).slice(0, n);
-}
-
-function countDuplicates(values) {
-  const m = new Map();
-  for (const v of values) m.set(v, (m.get(v) || 0) + 1);
-  let dup = 0;
-  for (const [, c] of m.entries()) if (c > 1) dup += (c - 1);
-  return dup;
-}
-
-/* ---------- Standard Template Download (with Instructions sheet) ---------- */
-
-function buildInstructionsSheetAOA() {
-  // Two-column layout for easy reading
-  const rows = [];
-
-  rows.push(["NKR KYC Standard Template — Instructions", ""]);
-  rows.push(["", ""]);
-  rows.push(["How to use", "1) Do NOT rename headers. 2) Paste data starting from row 2 in 'KYC_Data'. 3) Save as .xlsx and upload in the tool."]);
-  rows.push(["Important", "Do not add extra rows above headers. Do not merge header cells. Keep one record per row."]);
-  rows.push(["Date format", "Use DD-MM-YYYY or DD/MM/YYYY (recommended)."]);
-  rows.push(["", ""]);
-
-  rows.push(["Recommended values (Status)", "Use consistent values such as: Active / Inactive / Closed / Frozen / Pending (as applicable)."]);
-  rows.push(["Recommended values (Scan/Upload status)", "Use: Done / Pending. (Avoid multiple spellings; keep consistent.)"]);
-  rows.push(["Omissions/Rejections", "If any issue: mention brief reason (e.g., 'CIF mismatch', 'Document missing', 'Name mismatch'). Leave blank if none."]);
-  rows.push(["", ""]);
-
-  rows.push(["Column guide", ""]);
-  rows.push(["Rgn Sl No", "Region serial number (if applicable)."]);
-  rows.push(["Dvn Sl No", "Division serial number (if applicable)."]);
-  rows.push(["sol_id", "SOL/Branch/Office identifier."]);
-  rows.push(["Office", "Office name."]);
-  rows.push(["Division", "Division name."]);
-  rows.push(["Account No", "Account number (prefer full number, no spaces)."]);
-  rows.push(["cif_id", "CIF ID (if available)."]);
-  rows.push(["acct_name", "Account holder name (as per CBS)."]);
-  rows.push(["schm_code", "Scheme code (as per CBS)."]);
-  rows.push(["acct_opn_date", "Account opening date."]);
-  rows.push(["last_any_tran_date", "Last transaction date (any transaction)."]);
-  rows.push(["Status", "Account status / KYC status as per your workflow."]);
-  rows.push(["Consignment number", "Consignment/dispatch number (if submitted)."]);
-  rows.push(["Date of submission to CPC", "Date the case/file submitted to CPC."]);
-  rows.push(["Scan/Upload status", "Done / Pending (recommended)."]);
-  rows.push(["Omissions/Rejections", "Any omission/rejection remarks; blank if none."]);
-  rows.push(["", ""]);
-
-  rows.push(["Do / Don't (Quick)", "DO: Keep headers unchanged | DO: Keep one row per account | DON'T: rename headers | DON'T: add top title rows | DON'T: merge header cells"]);
-
   return rows;
 }
 
-function downloadStandardTemplate() {
-  if (typeof XLSX === "undefined") {
+function downloadStandardTemplate(){
+  if(typeof XLSX === "undefined"){
     showAlert("Cannot generate template because XLSX library did not load.", "bad");
     return;
   }
 
-  // Sheet 1: Data
-  const dataAOA = [
-    EXPECTED_HEADERS,
-    EXPECTED_HEADERS.map(() => "") // one blank example row
-  ];
-  const wsData = XLSX.utils.aoa_to_sheet(dataAOA);
+  const wsData = XLSX.utils.aoa_to_sheet([EXPECTED_HEADERS, EXPECTED_HEADERS.map(()=> "")]);
   wsData["!cols"] = EXPECTED_HEADERS.map(h => ({ wch: Math.max(12, Math.min(32, h.length + 2)) }));
-
-  // Freeze top row (best effort)
   wsData["!freeze"] = { xSplit: 0, ySplit: 1 };
 
-  // Sheet 2: Instructions
-  const instructionsAOA = buildInstructionsSheetAOA();
-  const wsInst = XLSX.utils.aoa_to_sheet(instructionsAOA);
-  wsInst["!cols"] = [{ wch: 28 }, { wch: 80 }];
-  wsInst["!freeze"] = { xSplit: 0, ySplit: 1 };
+  const wsIns = XLSX.utils.aoa_to_sheet(buildInstructionsAOA());
+  wsIns["!cols"] = [{ wch: 28 }, { wch: 80 }];
+  wsIns["!freeze"] = { xSplit: 0, ySplit: 1 };
 
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsData, "KYC_Data");
-  XLSX.utils.book_append_sheet(wb, wsInst, "Instructions");
+  XLSX.utils.book_append_sheet(wb, wsIns, "Instructions");
 
-  const filename = `NKR_KYC_Standard_Template.xlsx`;
-  XLSX.writeFile(wb, filename);
-
-  showAlert("Standard template downloaded (with Instructions sheet). Fill 'KYC_Data' and upload.", "ok");
+  XLSX.writeFile(wb, "NKR_KYC_Standard_Template.xlsx");
+  showAlert("Template downloaded. Fill ‘KYC_Data’ and upload.", "ok");
 }
 
-/* ---------- Upload & Parse ---------- */
+/* ---------------- Upload & import ---------------- */
 
-async function handleFile(file) {
+async function handleFile(file){
   clearAlert();
-  rawRows = [];
-  filteredRows = [];
 
-  if (typeof XLSX === "undefined") {
-    showAlert(
-      "Upload failed because the XLSX library did not load. Please check internet/CDN access or use the offline/local library option.",
-      "bad"
-    );
+  if(typeof XLSX === "undefined"){
+    showAlert("Upload failed: XLSX library not loaded. Please check CDN access.", "bad");
     return;
   }
 
-  const arrayBuffer = await file.arrayBuffer();
-  const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type:"array", cellDates:true });
 
-  // Prefer sheet named "KYC_Data" if present (from our standard template)
   const sheetName = wb.SheetNames.includes("KYC_Data") ? "KYC_Data" : wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
 
-  const rowsAOA = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: "" });
-
-  if (!rowsAOA.length) {
+  const rowsAOA = XLSX.utils.sheet_to_json(ws, { header:1, raw:true, defval:"" });
+  if(!rowsAOA.length){
     showAlert("No rows found in the sheet.", "bad");
     return;
   }
 
   const found = findHeaderRowIndex(rowsAOA, 30);
-  if (!found) {
-    showAlert(
-      "Header row not found in the top 30 rows. Please use 'Download Standard Template' and paste your data into it.",
-      "bad"
-    );
+  if(!found){
+    showAlert("Header row not found in top 30 rows. Use the Standard Template.", "bad");
     return;
   }
 
-  const headerRowIndex = found.headerRowIndex;
-  const headerRow = found.headerRowValues;
-
-  const v = validateHeaderRow(headerRow);
-  if (!v.ok) {
-    showAlert(
-      `Header validation failed. Missing headers: ${v.missing.join(", ")}. Please use 'Download Standard Template' to avoid mismatch.`,
-      "bad"
-    );
+  const v = validateHeaderRow(found.headerRowValues);
+  if(!v.ok){
+    showAlert(`Header validation failed. Missing: ${v.missing.join(", ")}. Use Standard Template.`, "bad");
     return;
   }
 
-  // Rebuild sheet starting at detected header row
-  const trimmedAOA = rowsAOA.slice(headerRowIndex);
-  const tempWs = XLSX.utils.aoa_to_sheet(trimmedAOA);
-  const json = XLSX.utils.sheet_to_json(tempWs, { defval: "" });
+  const trimmed = rowsAOA.slice(found.headerRowIndex);
+  const tempWs = XLSX.utils.aoa_to_sheet(trimmed);
+  const json = XLSX.utils.sheet_to_json(tempWs, { defval:"" });
 
-  rawRows = json.map((r) => {
-    const obj = {};
-    for (const h of EXPECTED_HEADERS) obj[h] = normalizeValue(r[h]);
-
-    obj.__dates = {
+  const rows = json.map(r=>{
+    const obj={};
+    for(const h of EXPECTED_HEADERS) obj[h]=normalizeValue(r[h]);
+    obj.__dates={
       "Date of submission to CPC": parseAnyDate(obj["Date of submission to CPC"]),
       "acct_opn_date": parseAnyDate(obj["acct_opn_date"]),
       "last_any_tran_date": parseAnyDate(obj["last_any_tran_date"])
@@ -370,307 +262,388 @@ async function handleFile(file) {
     return obj;
   });
 
-  if (!rawRows.length) {
-    showAlert("No data rows found after the header row.", "bad");
-    return;
-  }
+  rawRows = rows;
+  saveDataset(rawRows);
+  setDataChipText();
 
-  populateFilters(rawRows);
-
-  setDataChip(`Loaded: ${file.name} • Rows: ${rawRows.length}`);
-  showAlert(
-    `Template validated successfully. Loaded ${rawRows.length} rows. (Sheet: ${sheetName}, header at row ${headerRowIndex + 1})`,
-    "ok"
-  );
-
-  setVisible("filtersPanel", true);
-  setVisible("dashPanel", true);
-
-  autoSetDateRange();
-  activateTab("kpis");
-  applyFiltersAndRender();
+  showAlert(`Imported ${rawRows.length} rows (sheet: ${sheetName}, header row: ${found.headerRowIndex+1}).`, "ok");
 }
 
-function autoSetDateRange() {
-  const dates = rawRows
-    .map(r => r.__dates["Date of submission to CPC"])
-    .filter(Boolean)
-    .sort((a, b) => a - b);
+/* ---------------- Filters helpers (dashboard) ---------------- */
 
-  if (!dates.length) return;
+function uniq(arr){ return [...new Set(arr)]; }
 
-  const max = dates[dates.length - 1];
-  const min = dates[0];
-  const from = new Date(max.getFullYear(), max.getMonth(), max.getDate() - 30);
-
-  el("fromDate").value = fmtDateISO(from < min ? min : from);
-  el("toDate").value = fmtDateISO(max);
-}
-
-function populateFilters(rows) {
-  const divisions = uniq(rows.map(r => r["Division"]).filter(Boolean)).sort();
-  const offices = uniq(rows.map(r => r["Office"]).filter(Boolean)).sort();
-  const status = uniq(rows.map(r => r["Status"]).filter(Boolean)).sort();
-  const scan = uniq(rows.map(r => r["Scan/Upload status"]).filter(Boolean)).sort();
-
-  fillSelect(el("divisionFilter"), divisions);
-  fillSelect(el("officeFilter"), offices);
-  fillSelect(el("statusFilter"), status);
-  fillSelect(el("scanFilter"), scan);
-
-  el("divisionFilter").onchange = () => {
-    const dvn = el("divisionFilter").value;
-    const scoped = dvn ? rows.filter(r => r["Division"] === dvn) : rows;
-    const newOffices = uniq(scoped.map(r => r["Office"]).filter(Boolean)).sort();
-    fillSelect(el("officeFilter"), newOffices, true);
-  };
-}
-
-function fillSelect(selectEl, values, keepAll = false) {
+function fillSelect(selectEl, values){
+  if(!selectEl) return;
   selectEl.innerHTML = "";
-
   const optAll = document.createElement("option");
-  optAll.value = "";
-  optAll.textContent = "All";
+  optAll.value=""; optAll.textContent="All";
   selectEl.appendChild(optAll);
-
-  for (const v of values) {
+  for(const v of values){
     const opt = document.createElement("option");
-    opt.value = v;
-    opt.textContent = v;
+    opt.value=v; opt.textContent=v;
     selectEl.appendChild(opt);
   }
-
-  if (keepAll) selectEl.value = "";
 }
 
-/* ---------- Filtering & Rendering ---------- */
+function autoSetDateRange(){
+  const dates = rawRows.map(r=>r.__dates["Date of submission to CPC"]).filter(Boolean).sort((a,b)=>a-b);
+  if(!dates.length) return;
+  const max = dates[dates.length-1];
+  const min = dates[0];
+  const from = new Date(max.getFullYear(), max.getMonth(), max.getDate()-30);
+  const fromEl = el("fromDate");
+  const toEl = el("toDate");
+  if(fromEl) fromEl.value = fmtDateISO(from < min ? min : from);
+  if(toEl) toEl.value = fmtDateISO(max);
+}
 
-function getCurrentFilters() {
-  const dateBasis = el("dateBasis").value;
-  const from = el("fromDate").value ? new Date(el("fromDate").value + "T00:00:00") : null;
-  const to = el("toDate").value ? new Date(el("toDate").value + "T00:00:00") : null;
+function populateFilters(){
+  fillSelect(el("divisionFilter"), uniq(rawRows.map(r=>r["Division"]).filter(Boolean)).sort());
+  fillSelect(el("officeFilter"), uniq(rawRows.map(r=>r["Office"]).filter(Boolean)).sort());
+  fillSelect(el("statusFilter"), uniq(rawRows.map(r=>r["Status"]).filter(Boolean)).sort());
+  fillSelect(el("scanFilter"), uniq(rawRows.map(r=>r["Scan/Upload status"]).filter(Boolean)).sort());
+
+  const divisionFilter = el("divisionFilter");
+  if(divisionFilter){
+    divisionFilter.onchange = () => {
+      const dvn = divisionFilter.value;
+      const scoped = dvn ? rawRows.filter(r=>r["Division"]===dvn) : rawRows;
+      fillSelect(el("officeFilter"), uniq(scoped.map(r=>r["Office"]).filter(Boolean)).sort());
+    };
+  }
+}
+
+function getFilters(){
+  const dateBasis = el("dateBasis")?.value || "Date of submission to CPC";
+  const from = el("fromDate")?.value ? new Date(el("fromDate").value+"T00:00:00") : null;
+  const to = el("toDate")?.value ? new Date(el("toDate").value+"T00:00:00") : null;
 
   return {
-    viewMode: el("viewMode").value,
+    viewMode: el("viewMode")?.value || "review",
     dateBasis,
-    from,
-    to,
-    division: el("divisionFilter").value,
-    office: el("officeFilter").value,
-    status: el("statusFilter").value,
-    scan: el("scanFilter").value
+    from,to,
+    division: el("divisionFilter")?.value || "",
+    office: el("officeFilter")?.value || "",
+    status: el("statusFilter")?.value || "",
+    scan: el("scanFilter")?.value || ""
   };
 }
 
-function filterRows(rows, f) {
-  return rows.filter(r => {
-    if (f.division && r["Division"] !== f.division) return false;
-    if (f.office && r["Office"] !== f.office) return false;
-    if (f.status && r["Status"] !== f.status) return false;
-    if (f.scan && r["Scan/Upload status"] !== f.scan) return false;
+function filterRows(f){
+  return rawRows.filter(r=>{
+    if(f.division && r["Division"]!==f.division) return false;
+    if(f.office && r["Office"]!==f.office) return false;
+    if(f.status && r["Status"]!==f.status) return false;
+    if(f.scan && r["Scan/Upload status"]!==f.scan) return false;
 
     const d = r.__dates[f.dateBasis];
-    if ((f.from || f.to) && !inRange(d, f.from, f.to)) return false;
+    if((f.from||f.to) && !inRange(d, f.from, f.to)) return false;
 
     return true;
   });
 }
 
-function applyFiltersAndRender() {
-  if (!rawRows.length) return;
+/* ---------------- KPI improvements (dashboard) ---------------- */
 
-  const f = getCurrentFilters();
-  filteredRows = filterRows(rawRows, f);
-
-  renderKPIs(filteredRows, f);
-  renderQuality(filteredRows);
-  renderAgeing(filteredRows);
-  renderDataTable(filteredRows);
-  renderActionItems(filteredRows);
-  renderCharts(filteredRows, f);
-
-  el("dataSummary").textContent = `Showing ${filteredRows.length} rows in Data table`;
+function countDuplicates(values){
+  const m=new Map();
+  for(const v of values) m.set(v,(m.get(v)||0)+1);
+  let dup=0;
+  for(const [,c] of m.entries()) if(c>1) dup += (c-1);
+  return dup;
 }
 
-/* ---------- KPI / Cards ---------- */
-
-function renderKPIs(rows, f) {
-  const total = rows.length;
-
-  const submitted = rows.filter(r => r.__dates["Date of submission to CPC"]).length;
-  const missingConsignment = rows.filter(r => !hasText(r["Consignment number"]) && r.__dates["Date of submission to CPC"]).length;
-
-  const doneScan = rows.filter(r => isDoneScan(r["Scan/Upload status"])).length;
-  const pendingScan = rows.filter(r => !isDoneScan(r["Scan/Upload status"]) && r.__dates["Date of submission to CPC"]).length;
-
-  const omissions = rows.filter(r => hasText(r["Omissions/Rejections"])).length;
-  const omissionRate = total ? (omissions / total) * 100 : 0;
-
-  const uniqSol = uniq(rows.map(r => r["sol_id"]).filter(Boolean)).length;
-  const uniqAcct = uniq(rows.map(r => r["Account No"]).filter(Boolean)).length;
-
-  const missingCif = rows.filter(r => !hasText(r["cif_id"])).length;
-  const missingName = rows.filter(r => !hasText(r["acct_name"])).length;
-
-  const schemeTop = topNCount(rows, r => r["schm_code"], 5);
-  const modeLabel = f.viewMode.toUpperCase();
-
-  const kpis = [
-    { label: `${modeLabel} • Total Rows`, value: total, sub: "After filters" },
-    { label: "Submitted (has submission date)", value: submitted, sub: "Based on ‘Date of submission to CPC’" },
-    { label: "Scan/Upload Done", value: doneScan, sub: "Auto-detected: done/completed/uploaded..." },
-    { label: "Pending Scan/Upload", value: pendingScan, sub: "Submitted but not ‘Done’" },
-
-    { label: "Missing Consignment", value: missingConsignment, sub: "Among submitted" },
-    { label: "Omissions/Rejections", value: omissions, sub: `Rate: ${omissionRate.toFixed(1)}%` },
-    { label: "Unique SOL IDs", value: uniqSol, sub: "Coverage KPI" },
-    { label: "Unique Account Nos", value: uniqAcct, sub: "De-dup KPI" },
-
-    { label: "Missing CIF", value: missingCif, sub: "Data quality" },
-    { label: "Missing Account Name", value: missingName, sub: "Data quality" },
-    { label: "Top Schemes", value: schemeTop[0] ? schemeTop[0].k : "—", sub: schemeTop.map(x => `${x.k}: ${x.v}`).join(" • ") || "No scheme codes found" },
-    { label: "Division Count", value: uniq(rows.map(r => r["Division"]).filter(Boolean)).length, sub: "Divisions in filtered set" }
-  ];
-
-  const grid = el("kpiGrid");
-  grid.innerHTML = "";
-  for (const k of kpis) {
-    const d = document.createElement("div");
-    d.className = "kpi";
-    d.innerHTML = `
-      <div class="kpi__label">${escapeHtml(k.label)}</div>
-      <div class="kpi__value">${escapeHtml(String(k.value))}</div>
-      <div class="kpi__sub">${escapeHtml(k.sub || "")}</div>
-    `;
-    grid.appendChild(d);
-  }
-}
-
-function renderQuality(rows) {
-  const invalidSubmission = rows.filter(r => r["Date of submission to CPC"] && !r.__dates["Date of submission to CPC"]).length;
-  const invalidOpen = rows.filter(r => r["acct_opn_date"] && !r.__dates["acct_opn_date"]).length;
-  const invalidLast = rows.filter(r => r["last_any_tran_date"] && !r.__dates["last_any_tran_date"]).length;
-
-  const dupAccounts = countDuplicates(rows.map(r => r["Account No"]).filter(Boolean));
-  const dupConsign = countDuplicates(rows.map(r => r["Consignment number"]).filter(Boolean));
-
-  const missingAny = rows.filter(r => {
-    const must = ["sol_id", "Office", "Division", "Account No"];
-    return must.some(k => !hasText(r[k]));
-  }).length;
-
-  el("qualityBox").innerHTML = `
-    <ul>
-      <li>Invalid dates — Submission: <b>${invalidSubmission}</b>, Open: <b>${invalidOpen}</b>, Last Tran: <b>${invalidLast}</b></li>
-      <li>Duplicate Account No occurrences: <b>${dupAccounts}</b></li>
-      <li>Duplicate Consignment No occurrences: <b>${dupConsign}</b></li>
-      <li>Rows missing one or more core identifiers (sol_id/Office/Division/Account No): <b>${missingAny}</b></li>
-    </ul>
-  `;
-}
-
-function renderAgeing(rows) {
+function ageingBuckets(rows){
   const now = new Date();
-  const pend = rows.filter(r => r.__dates["Date of submission to CPC"] && !isDoneScan(r["Scan/Upload status"]));
-
-  const buckets = { "0–2 days": 0, "3–7 days": 0, "8–15 days": 0, ">15 days": 0 };
-  for (const r of pend) {
+  const pend = rows.filter(r=>r.__dates["Date of submission to CPC"] && !isDoneScan(r["Scan/Upload status"]));
+  const buckets = { "0–2 days":0, "3–7 days":0, "8–15 days":0, ">15 days":0 };
+  for(const r of pend){
     const d = r.__dates["Date of submission to CPC"];
-    const diffDays = Math.floor((startOfDay(now) - startOfDay(d)) / (1000 * 60 * 60 * 24));
-    if (diffDays <= 2) buckets["0–2 days"]++;
-    else if (diffDays <= 7) buckets["3–7 days"]++;
-    else if (diffDays <= 15) buckets["8–15 days"]++;
+    const diff = Math.floor((startOfDay(now)-startOfDay(d)) / (1000*60*60*24));
+    if(diff<=2) buckets["0–2 days"]++;
+    else if(diff<=7) buckets["3–7 days"]++;
+    else if(diff<=15) buckets["8–15 days"]++;
     else buckets[">15 days"]++;
   }
-
-  el("ageingBox").innerHTML = `
-    <div>Pending scan cases: <b>${pend.length}</b></div>
-    <ul>
-      ${Object.entries(buckets).map(([k,v]) => `<li>${k}: <b>${v}</b></li>`).join("")}
-    </ul>
-  `;
+  return { pendCount: pend.length, buckets };
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (m) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
-  }[m]));
+function topNCount(rows, keyFn, n=5){
+  const m=new Map();
+  for(const r of rows){
+    const k = normalizeValue(keyFn(r));
+    if(!k) continue;
+    m.set(k,(m.get(k)||0)+1);
+  }
+  return [...m.entries()].map(([k,v])=>({k,v})).sort((a,b)=>b.v-a.v).slice(0,n);
 }
 
-/* ---------- Tables ---------- */
+function renderKPIs(rows, f){
+  const kpiGrid = el("kpiGrid");
+  const meta = el("kpiMeta");
+  if(!kpiGrid) return;
 
-function buildTable(tableEl, columns, rows) {
+  const total = rows.length;
+
+  const submitted = rows.filter(r=>r.__dates["Date of submission to CPC"]).length;
+  const submittedPct = total ? (submitted/total)*100 : 0;
+
+  const scanDone = rows.filter(r=>isDoneScan(r["Scan/Upload status"])).length;
+  const scanDonePct = total ? (scanDone/total)*100 : 0;
+
+  const scanPending = rows.filter(r=>r.__dates["Date of submission to CPC"] && !isDoneScan(r["Scan/Upload status"])).length;
+
+  const missingConsign = rows.filter(r=>r.__dates["Date of submission to CPC"] && !hasText(r["Consignment number"])).length;
+  const omissions = rows.filter(r=>hasText(r["Omissions/Rejections"])).length;
+  const omissionRate = total ? (omissions/total)*100 : 0;
+
+  const missingCif = rows.filter(r=>!hasText(r["cif_id"])).length;
+  const missingName = rows.filter(r=>!hasText(r["acct_name"])).length;
+
+  const dupAcct = countDuplicates(rows.map(r=>r["Account No"]).filter(Boolean));
+  const dupCons = countDuplicates(rows.map(r=>r["Consignment number"]).filter(Boolean));
+
+  const uniqueDiv = uniq(rows.map(r=>r["Division"]).filter(Boolean)).length;
+  const uniqueOffice = uniq(rows.map(r=>r["Office"]).filter(Boolean)).length;
+
+  const age = ageingBuckets(rows);
+  const late15 = age.buckets[">15 days"] || 0;
+
+  const topDivByPending = (() => {
+    const map = new Map();
+    for(const r of rows){
+      const div = r["Division"] || "(Blank)";
+      const pend = r.__dates["Date of submission to CPC"] && !isDoneScan(r["Scan/Upload status"]);
+      if(!map.has(div)) map.set(div,{submitted:0, pending:0});
+      const x = map.get(div);
+      if(r.__dates["Date of submission to CPC"]) x.submitted++;
+      if(pend) x.pending++;
+    }
+    const arr = [...map.entries()].map(([k,v])=>{
+      const pct = v.submitted ? (v.pending/v.submitted)*100 : 0;
+      return { k, pct:+pct.toFixed(1), pending:v.pending };
+    }).sort((a,b)=> b.pct - a.pct);
+    return arr[0] ? `${arr[0].k} (${arr[0].pct}% pending)` : "—";
+  })();
+
+  const topScheme = topNCount(rows, r=>r["schm_code"], 1);
+  const topSchemeText = topScheme[0] ? `${topScheme[0].k} (${topScheme[0].v})` : "—";
+
+  if(meta){
+    const rangeText = (f.from||f.to) ? `${f.from?fmtDateISO(f.from):"…"} → ${f.to?fmtDateISO(f.to):"…"}` : "All dates";
+    meta.textContent = `Rows: ${total} • View: ${f.viewMode.toUpperCase()} • Date basis: ${f.dateBasis} • Range: ${rangeText}`;
+  }
+
+  const kpis = [
+    {label:"Total records", value: total, sub:"After filters"},
+    {label:"Submitted to CPC", value: submitted, sub:`${submittedPct.toFixed(1)}% of total`},
+    {label:"Scan/Upload Done", value: scanDone, sub:`${scanDonePct.toFixed(1)}% of total`},
+    {label:"Pending Scan (submitted)", value: scanPending, sub:"Focus backlog"},
+
+    {label:"Missing Consignment (submitted)", value: missingConsign, sub:"Dispatch tracking gap"},
+    {label:"Omissions/Rejections", value: omissions, sub:`Rate: ${omissionRate.toFixed(1)}%`},
+    {label:"Pending > 15 days", value: late15, sub:"SLA breach indicator"},
+    {label:"Top pending division", value: topDivByPending, sub:"Worst pending % (submitted)"},
+
+    {label:"Missing CIF", value: missingCif, sub:"Data quality"},
+    {label:"Missing Account Name", value: missingName, sub:"Data quality"},
+    {label:"Duplicate Account No", value: dupAcct, sub:"Possible duplicate entries"},
+    {label:"Duplicate Consignment No", value: dupCons, sub:"Dispatch duplication risk"},
+
+    {label:"Divisions covered", value: uniqueDiv, sub:"In filtered set"},
+    {label:"Offices covered", value: uniqueOffice, sub:"In filtered set"},
+    {label:"Top Scheme Code", value: topSchemeText, sub:"Most frequent scheme"},
+    {label:"Ageing buckets (pending)", value: age.pendCount, sub:`0–2:${age.buckets["0–2 days"]} • 3–7:${age.buckets["3–7 days"]} • 8–15:${age.buckets["8–15 days"]} • >15:${age.buckets[">15 days"]}`},
+  ];
+
+  kpiGrid.innerHTML = "";
+  for(const k of kpis){
+    const d=document.createElement("div");
+    d.className="kpi";
+    d.innerHTML = `
+      <div class="kpi__label">${escapeHtml(String(k.label))}</div>
+      <div class="kpi__value">${escapeHtml(String(k.value))}</div>
+      <div class="kpi__sub">${escapeHtml(String(k.sub||""))}</div>
+    `;
+    kpiGrid.appendChild(d);
+  }
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, (m)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[m]));
+}
+
+/* ---------------- Charts (dashboard) ---------------- */
+
+function countBy(rows, keyFn){
+  const map=new Map();
+  for(const r of rows){
+    const k=keyFn(r);
+    map.set(k,(map.get(k)||0)+1);
+  }
+  return map;
+}
+
+function groupBy(rows, keyFn){
+  const m=new Map();
+  for(const r of rows){
+    const k = normalizeValue(keyFn(r)) || "(Blank)";
+    if(!m.has(k)) m.set(k, []);
+    m.get(k).push(r);
+  }
+  return m;
+}
+
+function buildOrUpdateChart(existing, canvasId, type, data){
+  const c = document.getElementById(canvasId);
+  if(!c || typeof Chart === "undefined") return null;
+
+  if(existing){
+    existing.data = data;
+    existing.update();
+    return existing;
+  }
+
+  return new Chart(c, {
+    type,
+    data,
+    options:{
+      responsive:true,
+      plugins:{ legend:{ labels:{ color:"rgba(255,255,255,.85)" } } },
+      scales: type==="doughnut" ? {} : {
+        x:{ ticks:{ color:"rgba(255,255,255,.75)" }, grid:{ color:"rgba(255,255,255,.06)" } },
+        y:{ ticks:{ color:"rgba(255,255,255,.75)" }, grid:{ color:"rgba(255,255,255,.06)" } }
+      }
+    }
+  });
+}
+
+function renderCharts(rows, f){
+  if(typeof Chart === "undefined") return;
+
+  const basis = f.dateBasis;
+  const dated = rows.map(r => r.__dates[basis] ? fmtDateISO(r.__dates[basis]) : null).filter(Boolean);
+  const trendMap = countBy(dated, x=>x);
+  const trendLabels = [...trendMap.keys()].sort();
+  const trendValues = trendLabels.map(l=>trendMap.get(l));
+
+  charts.trend = buildOrUpdateChart(charts.trend, "trendChart", "line", {
+    labels: trendLabels,
+    datasets:[{ label:`Count by day (${basis})`, data:trendValues, tension:0.25 }]
+  });
+
+  const byDiv = groupBy(rows, r=>r["Division"] || "(Blank)");
+  const divArr = [];
+  for(const [div, list] of byDiv.entries()){
+    const sub = list.filter(r=>r.__dates["Date of submission to CPC"]).length;
+    const pend = list.filter(r=>r.__dates["Date of submission to CPC"] && !isDoneScan(r["Scan/Upload status"])).length;
+    const pct = sub ? (pend/sub)*100 : 0;
+    divArr.push({ div, pct:+pct.toFixed(2) });
+  }
+  divArr.sort((a,b)=>b.pct-a.pct);
+  const top12 = divArr.slice(0,12);
+
+  charts.division = buildOrUpdateChart(charts.division, "divisionChart", "bar", {
+    labels: top12.map(x=>x.div),
+    datasets:[{ label:"Pending Scan % (top 12)", data: top12.map(x=>x.pct) }]
+  });
+
+  const done = rows.filter(r=>isDoneScan(r["Scan/Upload status"])).length;
+  const pending = rows.filter(r=>hasText(r["Scan/Upload status"]) && !isDoneScan(r["Scan/Upload status"])).length;
+  const blank = rows.filter(r=>!hasText(r["Scan/Upload status"])).length;
+
+  charts.scan = buildOrUpdateChart(charts.scan, "scanChart", "doughnut", {
+    labels:["Done","Pending","Blank"],
+    datasets:[{ label:"Scan/Upload status", data:[done,pending,blank] }]
+  });
+}
+
+/* ---------------- Tables + dual scrollbars ---------------- */
+
+function buildTable(tableEl, columns, rows){
   const thead = tableEl.querySelector("thead");
   const tbody = tableEl.querySelector("tbody");
-  thead.innerHTML = "";
-  tbody.innerHTML = "";
+  thead.innerHTML=""; tbody.innerHTML="";
 
-  const trh = document.createElement("tr");
-  for (const c of columns) {
-    const th = document.createElement("th");
-    th.textContent = c;
+  const trh=document.createElement("tr");
+  for(const c of columns){
+    const th=document.createElement("th");
+    th.textContent=c;
     trh.appendChild(th);
   }
   thead.appendChild(trh);
 
-  for (const r of rows) {
-    const tr = document.createElement("tr");
-    for (const c of columns) {
-      const td = document.createElement("td");
+  rows.forEach((r, idx)=>{
+    const tr=document.createElement("tr");
+    tr.dataset.rowIndex = String(idx);
+    for(const c of columns){
+      const td=document.createElement("td");
       td.textContent = normalizeValue(r[c]);
       tr.appendChild(td);
     }
     tbody.appendChild(tr);
-  }
-
-  const dataSearch = el("dataSearch");
-  if (tableEl.id === "dataTable") {
-    dataSearch.oninput = () => {
-      const q = dataSearch.value.toLowerCase().trim();
-      filterTableBody(tableEl, q);
-    };
-  }
+  });
 }
 
-function filterTableBody(tableEl, q) {
-  const tbody = tableEl.querySelector("tbody");
-  const rows = [...tbody.querySelectorAll("tr")];
-  for (const tr of rows) {
+function syncTopBottomScroll(topScrollEl, topInnerEl, wrapEl){
+  if(!topScrollEl || !topInnerEl || !wrapEl) return;
+
+  // set top "inner width" to table scroll width
+  const updateWidth = () => {
+    topInnerEl.style.width = wrapEl.scrollWidth + "px";
+  };
+  updateWidth();
+  window.addEventListener("resize", updateWidth);
+
+  let lock=false;
+  topScrollEl.addEventListener("scroll", ()=>{
+    if(lock) return;
+    lock=true;
+    wrapEl.scrollLeft = topScrollEl.scrollLeft;
+    lock=false;
+  });
+  wrapEl.addEventListener("scroll", ()=>{
+    if(lock) return;
+    lock=true;
+    topScrollEl.scrollLeft = wrapEl.scrollLeft;
+    lock=false;
+  });
+}
+
+function filterTableBody(tableEl, q){
+  const rows = [...tableEl.querySelectorAll("tbody tr")];
+  rows.forEach(tr=>{
     const text = tr.innerText.toLowerCase();
     tr.style.display = text.includes(q) ? "" : "none";
-  }
+  });
 }
 
-function renderDataTable(rows) {
-  buildTable(el("dataTable"), EXPECTED_HEADERS, rows);
-  el("dataSummary").textContent = `Showing ${rows.length} rows in Data table`;
-}
+/* ---------------- Action items ---------------- */
 
-function renderActionItems(rows) {
-  const actions = [];
-
-  for (const r of rows) {
+function buildActionItems(rows){
+  const out=[];
+  for(const r of rows){
     const submitted = !!r.__dates["Date of submission to CPC"];
     const pendingScan = submitted && !isDoneScan(r["Scan/Upload status"]);
-    const missingConsignment = submitted && !hasText(r["Consignment number"]);
+    const missingCons = submitted && !hasText(r["Consignment number"]);
     const hasOmission = hasText(r["Omissions/Rejections"]);
     const missingCif = !hasText(r["cif_id"]);
     const missingName = !hasText(r["acct_name"]);
 
-    if (pendingScan || missingConsignment || hasOmission || missingCif || missingName) {
-      actions.push({
+    if(pendingScan || missingCons || hasOmission || missingCif || missingName){
+      out.push({
         "Division": r["Division"],
         "Office": r["Office"],
         "sol_id": r["sol_id"],
         "Account No": r["Account No"],
-        "Submission Date": r["Date of submission to CPC"],
+        "Date of submission to CPC": r["Date of submission to CPC"],
         "Scan/Upload status": r["Scan/Upload status"],
         "Consignment number": r["Consignment number"],
         "Omissions/Rejections": r["Omissions/Rejections"],
         "Flags": [
           pendingScan ? "Pending Scan" : null,
-          missingConsignment ? "Missing Consignment" : null,
+          missingCons ? "Missing Consignment" : null,
           hasOmission ? "Omission/Rejection" : null,
           missingCif ? "Missing CIF" : null,
           missingName ? "Missing Name" : null
@@ -678,198 +651,297 @@ function renderActionItems(rows) {
       });
     }
   }
-
-  const cols = ["Division","Office","sol_id","Account No","Submission Date","Scan/Upload status","Consignment number","Omissions/Rejections","Flags"];
-  buildTable(el("actionsTable"), cols, actions);
-
-  el("actionsSummary").textContent = `Action items: ${actions.length} (Pending scan / missing consignment / omissions / missing CIF/name)`;
-  el("actionsSearch").oninput = () => {
-    const q = el("actionsSearch").value.toLowerCase().trim();
-    filterTableBody(el("actionsTable"), q);
-  };
+  return out;
 }
 
-/* ---------- Charts ---------- */
+/* ---------------- Export ---------------- */
 
-function buildOrUpdateChart(existing, canvasId, type, data) {
-  const ctx = el(canvasId);
-  if (!ctx) return null;
-
-  if (existing) {
-    existing.data = data;
-    existing.update();
-    return existing;
-  }
-
-  return new Chart(ctx, {
-    type,
-    data,
-    options: {
-      responsive: true,
-      plugins: { legend: { labels: { color: "rgba(255,255,255,0.85)" } } },
-      scales: type === "doughnut" ? {} : {
-        x: { ticks: { color: "rgba(255,255,255,0.75)" }, grid: { color: "rgba(255,255,255,0.06)" } },
-        y: { ticks: { color: "rgba(255,255,255,0.75)" }, grid: { color: "rgba(255,255,255,0.06)" } }
-      }
-    }
-  });
+function csvCell(v){
+  const s = String(v ?? "").replace(/"/g,'""');
+  return /[",\n]/.test(s) ? `"${s}"` : s;
 }
 
-function renderCharts(rows, f) {
-  const basis = f.dateBasis;
-
-  const dated = rows
-    .map(r => r.__dates[basis] ? { d: fmtDateISO(r.__dates[basis]) } : null)
-    .filter(Boolean);
-
-  const trendMap = countBy(dated, x => x.d);
-  const trendLabels = [...trendMap.keys()].sort();
-  const trendValues = trendLabels.map(l => trendMap.get(l));
-
-  const byDiv = groupBy(rows, r => r["Division"] || "(Blank)");
-  const divLabels = [];
-  const divVals = [];
-  for (const [div, list] of byDiv.entries()) {
-    const submitted = list.filter(r => r.__dates["Date of submission to CPC"]).length || 0;
-    const pend = list.filter(r => r.__dates["Date of submission to CPC"] && !isDoneScan(r["Scan/Upload status"])).length || 0;
-    const pct = submitted ? (pend / submitted) * 100 : 0;
-    divLabels.push(div);
-    divVals.push(+pct.toFixed(2));
-  }
-
-  const zipped = divLabels.map((d,i) => ({d, v: divVals[i]})).sort((a,b) => b.v - a.v).slice(0, 12);
-  const divLabels2 = zipped.map(x => x.d);
-  const divVals2 = zipped.map(x => x.v);
-
-  const done = rows.filter(r => isDoneScan(r["Scan/Upload status"])).length;
-  const pending = rows.filter(r => hasText(r["Scan/Upload status"]) && !isDoneScan(r["Scan/Upload status"])).length;
-  const blank = rows.filter(r => !hasText(r["Scan/Upload status"])).length;
-
-  charts.trend = buildOrUpdateChart(charts.trend, "trendChart", "line", {
-    labels: trendLabels,
-    datasets: [{ label: `Count by day (${basis})`, data: trendValues, tension: 0.25 }]
-  });
-
-  charts.division = buildOrUpdateChart(charts.division, "divisionChart", "bar", {
-    labels: divLabels2,
-    datasets: [{ label: "Pending Scan % (top 12)", data: divVals2 }]
-  });
-
-  charts.scan = buildOrUpdateChart(charts.scan, "scanChart", "doughnut", {
-    labels: ["Done", "Pending", "Blank"],
-    datasets: [{ label: "Scan/Upload status", data: [done, pending, blank] }]
-  });
-}
-
-/* ---------- Tabs ---------- */
-
-function activateTab(name) {
-  const tabs = document.querySelectorAll(".tab");
-  const panes = {
-    kpis: el("tab-kpis"),
-    charts: el("tab-charts"),
-    actions: el("tab-actions"),
-    data: el("tab-data")
-  };
-  tabs.forEach(t => t.classList.toggle("active", t.dataset.tab === name));
-  Object.entries(panes).forEach(([k, node]) => node.classList.toggle("hidden", k !== name));
-}
-
-/* ---------- Export ---------- */
-
-function csvCell(v) {
-  const s = String(v ?? "").replace(/"/g, '""');
-  if (/[",\n]/.test(s)) return `"${s}"`;
-  return s;
-}
-
-function downloadCsv(rows) {
-  if (!rows.length) {
-    showAlert("Nothing to export (0 rows after filters).", "warn");
+function downloadCsv(filename, cols, rows){
+  if(!rows.length){
+    showAlert("Nothing to export (0 rows).","warn");
     return;
   }
-
-  const cols = EXPECTED_HEADERS;
   const csv = [
     cols.join(","),
-    ...rows.map(r => cols.map(c => csvCell(r[c])).join(","))
+    ...rows.map(r => cols.map(c=>csvCell(r[c])).join(","))
   ].join("\n");
 
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
   const url = URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `kyc_export_${new Date().toISOString().slice(0,10)}.csv`;
+  const a=document.createElement("a");
+  a.href=url;
+  a.download=filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
 }
 
-/* ---------- Events ---------- */
+function downloadXlsxFromRows(filename, cols, rows){
+  if(typeof XLSX === "undefined"){
+    showAlert("XLSX export requires XLSX library. Open upload page once (loads library), then retry.","warn");
+    return;
+  }
+  const aoa = [cols, ...rows.map(r => cols.map(c=>r[c] ?? ""))];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = cols.map(h => ({ wch: Math.max(12, Math.min(32, String(h).length + 2)) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Export");
+  XLSX.writeFile(wb, filename);
+}
 
-function wireEvents() {
-  el("fileInput").addEventListener("change", async (e) => {
+/* ---------------- Data entry (Add/Edit/Delete) ---------------- */
+
+let modalMode = "add";
+let modalIndex = -1;
+
+function openModal(rowObj){
+  const modal = el("rowModal");
+  const grid = el("modalGrid");
+  const title = el("modalTitle");
+  if(!modal || !grid || !title) return;
+
+  grid.innerHTML = "";
+  EXPECTED_HEADERS.forEach(h=>{
+    const wrap = document.createElement("div");
+    wrap.className="field";
+    wrap.innerHTML = `<label>${escapeHtml(h)}</label><input id="f_${h}" />`;
+    grid.appendChild(wrap);
+
+    const input = document.getElementById(`f_${h}`);
+    input.value = rowObj?.[h] ?? "";
+  });
+
+  title.textContent = modalMode === "add" ? "Add Record" : "Edit Record";
+  el("btnDeleteRow").classList.toggle("hidden", modalMode === "add");
+
+  modal.classList.remove("hidden");
+}
+
+function closeModal(){
+  const modal = el("rowModal");
+  if(modal) modal.classList.add("hidden");
+}
+
+function readModalRow(){
+  const obj = {};
+  for(const h of EXPECTED_HEADERS){
+    const inp = document.getElementById(`f_${h}`);
+    obj[h] = normalizeValue(inp ? inp.value : "");
+  }
+  obj.__dates = {
+    "Date of submission to CPC": parseAnyDate(obj["Date of submission to CPC"]),
+    "acct_opn_date": parseAnyDate(obj["acct_opn_date"]),
+    "last_any_tran_date": parseAnyDate(obj["last_any_tran_date"])
+  };
+  return obj;
+}
+
+/* ---------------- Page initializers ---------------- */
+
+function initUploadPage(){
+  setDataChipText();
+
+  el("btnDownloadTemplate")?.addEventListener("click", downloadStandardTemplate);
+  el("themeToggle")?.addEventListener("click", toggleTheme);
+
+  el("btnGoDashboard")?.addEventListener("click", ()=> window.location.href="dashboard.html");
+
+  el("fileInput")?.addEventListener("change", async (e)=>{
     const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
+    if(!file) return;
+    try{
       await handleFile(file);
-    } catch (err) {
+      setDataChipText();
+    }catch(err){
       console.error(err);
-
-      if (typeof XLSX === "undefined") {
-        showAlert(
-          "Upload failed because the XLSX library did not load. Please check internet/CDN access or use the offline/local library option.",
-          "bad"
-        );
-        return;
-      }
-
-      showAlert("Error reading file. Please ensure it is a valid Excel file.", "bad");
+      showAlert("Error reading file. Please ensure it is a valid Excel file.","bad");
     }
-  });
-
-  // This button exists in your updated index.html
-  const btnTpl = el("btnDownloadTemplate");
-  if (btnTpl) btnTpl.addEventListener("click", () => downloadStandardTemplate());
-
-  el("btnApply").addEventListener("click", () => applyFiltersAndRender());
-
-  el("btnReset").addEventListener("click", () => {
-    rawRows = [];
-    filteredRows = [];
-    clearAlert();
-    setDataChip("No data loaded");
-    el("fileInput").value = "";
-    setVisible("filtersPanel", false);
-    setVisible("dashPanel", false);
-
-    if (charts.trend) charts.trend.destroy();
-    if (charts.division) charts.division.destroy();
-    if (charts.scan) charts.scan.destroy();
-    charts = { trend: null, division: null, scan: null };
-
-    showAlert("Reset done. Please upload the template again.", "ok");
-  });
-
-  el("btnDownloadCsv").addEventListener("click", () => downloadCsv(filteredRows));
-
-  el("btnPrintReview").addEventListener("click", () => {
-    activateTab("kpis");
-    window.print();
-  });
-
-  el("viewMode").addEventListener("change", () => applyFiltersAndRender());
-
-  document.querySelectorAll(".tab").forEach(btn => {
-    btn.addEventListener("click", () => activateTab(btn.dataset.tab));
   });
 }
 
-wireEvents();
+function initDashboardPage(){
+  rawRows = loadDataset();
+  setDataChipText();
+  el("themeToggle")?.addEventListener("click", toggleTheme);
 
-// Default active tab
-const defaultTab = document.querySelector('.tab[data-tab="kpis"]');
-if (defaultTab) defaultTab.classList.add("active");
+  if(!rawRows.length){
+    showAlert("No dataset loaded. Please go to Upload page and import the template.", "warn");
+    return;
+  }
+
+  populateFilters();
+  autoSetDateRange();
+
+  const apply = ()=>{
+    const f = getFilters();
+    filteredRows = filterRows(f);
+    renderKPIs(filteredRows, f);
+    renderCharts(filteredRows, f);
+  };
+
+  el("btnApply")?.addEventListener("click", apply);
+
+  el("btnReset")?.addEventListener("click", ()=>{
+    resetDataset();
+    rawRows = [];
+    filteredRows = [];
+    setDataChipText();
+    showAlert("Dataset reset. Go to Upload page to import again.", "ok");
+  });
+
+  apply();
+}
+
+function initActionsPage(){
+  rawRows = loadDataset();
+  setDataChipText();
+  el("themeToggle")?.addEventListener("click", toggleTheme);
+
+  if(!rawRows.length){
+    showAlert("No dataset loaded. Please go to Upload page and import first.", "warn");
+    return;
+  }
+
+  actionRows = buildActionItems(rawRows);
+  const table = el("actionsTable");
+  if(table) buildTable(table, ACTION_COLS, actionRows);
+
+  const summary = el("actionsSummary");
+  if(summary) summary.textContent = `Action items: ${actionRows.length}`;
+
+  el("actionsSearch")?.addEventListener("input", ()=>{
+    const q = el("actionsSearch").value.toLowerCase().trim();
+    filterTableBody(table, q);
+  });
+
+  el("btnDownloadActionsCsv")?.addEventListener("click", ()=>{
+    downloadCsv(`kyc_action_items_${new Date().toISOString().slice(0,10)}.csv`, ACTION_COLS, actionRows);
+  });
+
+  // dual scrollbars
+  syncTopBottomScroll(el("actionsTopScroll"), el("actionsTopInner"), el("actionsWrap"));
+}
+
+function initDataPage(){
+  rawRows = loadDataset();
+  setDataChipText();
+  el("themeToggle")?.addEventListener("click", toggleTheme);
+
+  if(!rawRows.length){
+    showAlert("No dataset loaded. Please go to Upload page and import first.", "warn");
+    return;
+  }
+
+  const table = el("dataTable");
+  const wrap = el("dataWrap");
+
+  const render = ()=>{
+    // data table includes an extra "internal" index only via dataset rowIndex
+    buildTable(table, EXPECTED_HEADERS, rawRows);
+    const summary = el("dataSummary");
+    if(summary) summary.textContent = `Rows: ${rawRows.length}`;
+    syncTopBottomScroll(el("dataTopScroll"), el("dataTopInner"), wrap);
+  };
+
+  render();
+
+  el("dataSearch")?.addEventListener("input", ()=>{
+    const q = el("dataSearch").value.toLowerCase().trim();
+    filterTableBody(table, q);
+  });
+
+  el("btnDownloadCsv")?.addEventListener("click", ()=>{
+    downloadCsv(`kyc_data_${new Date().toISOString().slice(0,10)}.csv`, EXPECTED_HEADERS, rawRows);
+  });
+
+  el("btnDownloadXlsx")?.addEventListener("click", ()=>{
+    downloadXlsxFromRows(`kyc_data_${new Date().toISOString().slice(0,10)}.xlsx`, EXPECTED_HEADERS, rawRows);
+  });
+
+  el("btnAddRow")?.addEventListener("click", ()=>{
+    modalMode="add";
+    modalIndex=-1;
+    openModal({});
+  });
+
+  // row click = edit
+  table?.addEventListener("click", (e)=>{
+    const tr = e.target.closest("tr");
+    if(!tr || !tr.dataset.rowIndex) return;
+    const idx = parseInt(tr.dataset.rowIndex,10);
+    if(isNaN(idx)) return;
+    modalMode="edit";
+    modalIndex=idx;
+    openModal(rawRows[idx]);
+  });
+
+  el("btnModalClose")?.addEventListener("click", closeModal);
+
+  el("btnSaveRow")?.addEventListener("click", ()=>{
+    const obj = readModalRow();
+
+    // minimal validations (relevant entry controls)
+    if(!hasText(obj["Division"]) || !hasText(obj["Office"]) || !hasText(obj["Account No"])){
+      showAlert("Please fill at least Division, Office, and Account No.", "warn");
+      return;
+    }
+    const scan = toLower(obj["Scan/Upload status"]);
+    if(hasText(scan) && !(scan.includes("done") || scan.includes("pending") || scan.includes("complete") || scan.includes("uploaded") || scan.includes("scanned"))){
+      showAlert("Scan/Upload status: recommended values are Done / Pending.", "warn");
+    }
+
+    if(modalMode==="add"){
+      rawRows.push(obj);
+    }else if(modalMode==="edit" && modalIndex>=0){
+      rawRows[modalIndex] = obj;
+    }
+
+    saveDataset(rawRows);
+    setDataChipText();
+    closeModal();
+    render();
+    showAlert("Saved successfully.", "ok");
+  });
+
+  el("btnDeleteRow")?.addEventListener("click", ()=>{
+    if(modalMode!=="edit" || modalIndex<0) return;
+    rawRows.splice(modalIndex, 1);
+    saveDataset(rawRows);
+    setDataChipText();
+    closeModal();
+    render();
+    showAlert("Deleted successfully.", "ok");
+  });
+}
+
+/* ---------------- Boot ---------------- */
+
+applyThemeFromStorage();
+
+(function boot(){
+  const tgl = el("themeToggle");
+  if(tgl) tgl.addEventListener("click", toggleTheme);
+
+  // load dataset for chip across pages
+  rawRows = loadDataset();
+  setDataChipText();
+
+  const p = pageName();
+  if(p === "upload") initUploadPage();
+  if(p === "dashboard") initDashboardPage();
+  if(p === "actions") initActionsPage();
+  if(p === "data") initDataPage();
+
+  // highlight active nav link based on page name (optional)
+  const links = document.querySelectorAll(".nav a");
+  links.forEach(a=>{
+    const href = a.getAttribute("href") || "";
+    if(p && href.includes(p)) a.classList.add("active");
+  });
+})();
