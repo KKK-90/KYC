@@ -1,4 +1,6 @@
-/* NKR-KA KYC Tool — Browser-only static app (GitHub Pages ready) */
+/* NKR-KA KYC Tool — Browser-only static app (GitHub Pages ready)
+   Revised: adds XLSX-load guard + improved error message on upload failure
+*/
 
 const EXPECTED_HEADERS = [
   "Rgn Sl No",
@@ -24,6 +26,11 @@ const el = (id) => document.getElementById(id);
 let rawRows = [];       // normalized objects with expected keys
 let filteredRows = [];  // after filters
 let charts = { trend: null, division: null, scan: null };
+
+// Safety check: if the XLSX library didn't load, file upload will fail.
+if (typeof XLSX === "undefined") {
+  console.error("XLSX library not loaded. Check script tag / CDN / network policy.");
+}
 
 function showAlert(msg, type = "ok") {
   const box = el("alertBox");
@@ -127,11 +134,6 @@ function countBy(rows, keyFn) {
   return map;
 }
 
-function safeNum(n) {
-  if (n === null || n === undefined || isNaN(n)) return 0;
-  return n;
-}
-
 function setDataChip(text) {
   el("dataChip").textContent = text;
 }
@@ -149,6 +151,15 @@ async function handleFile(file) {
   rawRows = [];
   filteredRows = [];
 
+  // Hard guard: if XLSX is missing, stop with correct message
+  if (typeof XLSX === "undefined") {
+    showAlert(
+      "Upload failed because the XLSX library did not load. Please check internet/CDN access or use the offline/local library option.",
+      "bad"
+    );
+    return;
+  }
+
   const arrayBuffer = await file.arrayBuffer();
   const wb = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
   const firstSheetName = wb.SheetNames[0];
@@ -163,7 +174,6 @@ async function handleFile(file) {
 
   const headerRow = rowsAOA[0].map(h => normalizeValue(h));
   const missing = EXPECTED_HEADERS.filter(h => !headerRow.includes(h));
-  const extra = headerRow.filter(h => h && !EXPECTED_HEADERS.includes(h));
 
   if (missing.length) {
     showAlert(
@@ -180,6 +190,7 @@ async function handleFile(file) {
   rawRows = json.map((r) => {
     const obj = {};
     for (const h of EXPECTED_HEADERS) obj[h] = normalizeValue(r[h]);
+
     // Attach parsed dates for faster filtering
     obj.__dates = {
       "Date of submission to CPC": parseAnyDate(obj["Date of submission to CPC"]),
@@ -215,11 +226,11 @@ async function handleFile(file) {
 }
 
 function autoSetDateRange() {
-  // pick the min/max from submission date, default last 30 days if possible
   const dates = rawRows
     .map(r => r.__dates["Date of submission to CPC"])
     .filter(Boolean)
-    .sort((a,b) => a - b);
+    .sort((a, b) => a - b);
+
   if (!dates.length) return;
 
   const max = dates[dates.length - 1];
@@ -253,8 +264,8 @@ function populateFilters(rows) {
 }
 
 function fillSelect(selectEl, values, keepAll = false) {
-  const first = selectEl.options[0]; // "All"
   selectEl.innerHTML = "";
+
   const optAll = document.createElement("option");
   optAll.value = "";
   optAll.textContent = "All";
@@ -296,7 +307,6 @@ function filterRows(rows, f) {
     if (f.status && r["Status"] !== f.status) return false;
     if (f.scan && r["Scan/Upload status"] !== f.scan) return false;
 
-    // Date range based on selected basis
     const d = r.__dates[f.dateBasis];
     if ((f.from || f.to) && !inRange(d, f.from, f.to)) return false;
 
@@ -306,18 +316,17 @@ function filterRows(rows, f) {
 
 function applyFiltersAndRender() {
   if (!rawRows.length) return;
+
   const f = getCurrentFilters();
   filteredRows = filterRows(rawRows, f);
 
-  // KPI + tables + charts based on filtered
   renderKPIs(filteredRows, f);
-  renderQuality(filteredRows, f);
-  renderAgeing(filteredRows, f);
+  renderQuality(filteredRows);
+  renderAgeing(filteredRows);
   renderDataTable(filteredRows);
-  renderActionItems(filteredRows, f);
+  renderActionItems(filteredRows);
   renderCharts(filteredRows, f);
 
-  // summary chips
   const basis = f.dateBasis;
   const rangeText = (f.from || f.to)
     ? `${fmtDateISO(f.from)} → ${fmtDateISO(f.to)}`
@@ -329,12 +338,11 @@ function applyFiltersAndRender() {
 function renderKPIs(rows, f) {
   const total = rows.length;
 
-  const submittedDateBasis = "Date of submission to CPC";
-  const submitted = rows.filter(r => r.__dates[submittedDateBasis]).length;
-  const missingConsignment = rows.filter(r => !hasText(r["Consignment number"]) && r.__dates[submittedDateBasis]).length;
+  const submitted = rows.filter(r => r.__dates["Date of submission to CPC"]).length;
+  const missingConsignment = rows.filter(r => !hasText(r["Consignment number"]) && r.__dates["Date of submission to CPC"]).length;
 
   const doneScan = rows.filter(r => isDoneScan(r["Scan/Upload status"])).length;
-  const pendingScan = rows.filter(r => !isDoneScan(r["Scan/Upload status"]) && r.__dates[submittedDateBasis]).length;
+  const pendingScan = rows.filter(r => !isDoneScan(r["Scan/Upload status"]) && r.__dates["Date of submission to CPC"]).length;
 
   const omissions = rows.filter(r => hasText(r["Omissions/Rejections"])).length;
   const omissionRate = total ? (omissions / total) * 100 : 0;
@@ -347,7 +355,6 @@ function renderKPIs(rows, f) {
 
   const schemeTop = topNCount(rows, r => r["schm_code"], 5);
 
-  // View-mode hinting
   const modeLabel = f.viewMode.toUpperCase();
 
   const kpis = [
@@ -390,7 +397,6 @@ function renderQuality(rows) {
   const dupConsign = countDuplicates(rows.map(r => r["Consignment number"]).filter(Boolean));
 
   const missingAny = rows.filter(r => {
-    // core fields often expected
     const must = ["sol_id", "Office", "Division", "Account No"];
     return must.some(k => !hasText(r[k]));
   }).length;
@@ -406,7 +412,6 @@ function renderQuality(rows) {
 }
 
 function renderAgeing(rows) {
-  // Ageing based on submission date for pending scan
   const now = new Date();
   const pend = rows.filter(r => r.__dates["Date of submission to CPC"] && !isDoneScan(r["Scan/Upload status"]));
 
@@ -420,9 +425,8 @@ function renderAgeing(rows) {
     else buckets[">15 days"]++;
   }
 
-  const totalPend = pend.length;
   el("ageingBox").innerHTML = `
-    <div>Pending scan cases: <b>${totalPend}</b></div>
+    <div>Pending scan cases: <b>${pend.length}</b></div>
     <ul>
       ${Object.entries(buckets).map(([k,v]) => `<li>${k}: <b>${v}</b></li>`).join("")}
     </ul>
@@ -432,16 +436,10 @@ function renderAgeing(rows) {
 function renderDataTable(rows) {
   const table = el("dataTable");
   buildTable(table, EXPECTED_HEADERS, rows);
-
   el("dataSummary").textContent = `Showing ${rows.length} rows in Data table`;
 }
 
 function renderActionItems(rows) {
-  // Action Items = priority exceptions
-  // A) Submitted but missing consignment
-  // B) Submitted but pending scan
-  // C) Has omissions/rejections
-  // D) Missing CIF/Name
   const actions = [];
 
   for (const r of rows) {
@@ -479,7 +477,6 @@ function renderActionItems(rows) {
 
   el("actionsSummary").textContent = `Action items: ${actions.length} (Pending scan / missing consignment / omissions / missing CIF/name)`;
 
-  // search
   el("actionsSearch").oninput = () => {
     const q = el("actionsSearch").value.toLowerCase().trim();
     filterTableBody(table, q);
@@ -487,8 +484,8 @@ function renderActionItems(rows) {
 }
 
 function renderCharts(rows, f) {
-  // Trend chart: count per day based on selected dateBasis
   const basis = f.dateBasis;
+
   const dated = rows
     .map(r => r.__dates[basis] ? { d: fmtDateISO(r.__dates[basis]) } : null)
     .filter(Boolean);
@@ -497,10 +494,10 @@ function renderCharts(rows, f) {
   const trendLabels = [...trendMap.keys()].sort();
   const trendValues = trendLabels.map(l => trendMap.get(l));
 
-  // Division performance: pending scan % by division (based on submission date)
   const byDiv = groupBy(rows, r => r["Division"] || "(Blank)");
   const divLabels = [];
   const divVals = [];
+
   for (const [div, list] of byDiv.entries()) {
     const submitted = list.filter(r => r.__dates["Date of submission to CPC"]).length || 0;
     const pend = list.filter(r => r.__dates["Date of submission to CPC"] && !isDoneScan(r["Scan/Upload status"])).length || 0;
@@ -508,12 +505,11 @@ function renderCharts(rows, f) {
     divLabels.push(div);
     divVals.push(+pct.toFixed(2));
   }
-  // sort by highest pending %
+
   const zipped = divLabels.map((d,i) => ({d, v: divVals[i]})).sort((a,b) => b.v - a.v).slice(0, 12);
   const divLabels2 = zipped.map(x => x.d);
   const divVals2 = zipped.map(x => x.v);
 
-  // Scan status mix (done vs pending vs blank)
   const done = rows.filter(r => isDoneScan(r["Scan/Upload status"])).length;
   const pending = rows.filter(r => hasText(r["Scan/Upload status"]) && !isDoneScan(r["Scan/Upload status"])).length;
   const blank = rows.filter(r => !hasText(r["Scan/Upload status"])).length;
@@ -596,7 +592,6 @@ function buildTable(tableEl, columns, rows) {
     tbody.appendChild(tr);
   }
 
-  // attach default search
   const dataSearch = el("dataSearch");
   if (tableEl.id === "dataTable") {
     dataSearch.oninput = () => {
@@ -638,9 +633,7 @@ function countDuplicates(values) {
   const m = new Map();
   for (const v of values) m.set(v, (m.get(v) || 0) + 1);
   let dup = 0;
-  for (const [,c] of m.entries()) {
-    if (c > 1) dup += (c - 1); // extra occurrences
-  }
+  for (const [,c] of m.entries()) if (c > 1) dup += (c - 1);
   return dup;
 }
 
@@ -707,10 +700,20 @@ function wireEvents() {
   el("fileInput").addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     try {
       await handleFile(file);
     } catch (err) {
       console.error(err);
+
+      if (typeof XLSX === "undefined") {
+        showAlert(
+          "Upload failed because the XLSX library did not load. Please check internet/CDN access or use the offline/local library option.",
+          "bad"
+        );
+        return;
+      }
+
       showAlert("Error reading file. Please ensure it is a valid Excel file.", "bad");
     }
   });
@@ -718,7 +721,6 @@ function wireEvents() {
   el("btnApply").addEventListener("click", () => applyFiltersAndRender());
 
   el("btnReset").addEventListener("click", () => {
-    // Full reset
     rawRows = [];
     filteredRows = [];
     clearAlert();
@@ -726,26 +728,24 @@ function wireEvents() {
     el("fileInput").value = "";
     setVisible("filtersPanel", false);
     setVisible("dashPanel", false);
-    // Destroy charts
+
     if (charts.trend) charts.trend.destroy();
     if (charts.division) charts.division.destroy();
     if (charts.scan) charts.scan.destroy();
     charts = { trend: null, division: null, scan: null };
+
     showAlert("Reset done. Please upload the template again.", "ok");
   });
 
   el("btnDownloadCsv").addEventListener("click", () => downloadCsv(filteredRows));
 
   el("btnPrintReview").addEventListener("click", () => {
-    // For printing: switch to KPIs tab and print
     activateTab("kpis");
     window.print();
   });
 
-  // View mode changes: you can add view-specific behaviors here later
   el("viewMode").addEventListener("change", () => applyFiltersAndRender());
 
-  // Tabs
   document.querySelectorAll(".tab").forEach(btn => {
     btn.addEventListener("click", () => activateTab(btn.dataset.tab));
   });
@@ -755,4 +755,3 @@ wireEvents();
 
 // Default active tab button state
 document.querySelector('.tab[data-tab="kpis"]').classList.add("active");
-
