@@ -1,1 +1,136 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KYC | Dashboard</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+
+<body class="page" data-page="dashboard">
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div class="brand">
+        <div class="brand__title">NORTH KARNATAKA REGION</div>
+        <div class="brand__subtitle">KYC Dashboard</div>
+      </div>
+
+      <div class="nav">
+        <a href="upload.html">Upload</a>
+        <a class="active" href="dashboard.html">Dashboard</a>
+        <a href="actions.html">Action Items</a>
+        <a href="data.html">Data</a>
+        <span class="chip" id="dataChip">No data loaded</span>
+        <button class="btn btn--ghost btn--small" id="themeToggle">Light/Dark</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div class="panel__title">
+        <span>Filters</span>
+        <span class="muted">Daily / Weekly / Monthly / Review</span>
+      </div>
+
+      <div class="filters">
+        <div class="field">
+          <label>View</label>
+          <select id="viewMode">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="review" selected>Review</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>Date Basis</label>
+          <select id="dateBasis">
+            <option value="Date of submission to CPC" selected>Date of submission to CPC</option>
+            <option value="acct_opn_date">Account Open Date</option>
+            <option value="last_any_tran_date">Last Any Tran Date</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>From</label>
+          <input type="date" id="fromDate" />
+        </div>
+
+        <div class="field">
+          <label>To</label>
+          <input type="date" id="toDate" />
+        </div>
+
+        <div class="field">
+          <label>Division</label>
+          <select id="divisionFilter"><option value="">All</option></select>
+        </div>
+
+        <div class="field">
+          <label>Office</label>
+          <select id="officeFilter"><option value="">All</option></select>
+        </div>
+
+        <div class="field">
+          <label>Status</label>
+          <select id="statusFilter"><option value="">All</option></select>
+        </div>
+
+        <div class="field">
+          <label>Scan/Upload status</label>
+          <select id="scanFilter"><option value="">All</option></select>
+        </div>
+
+        <div class="field field--actions">
+          <label>&nbsp;</label>
+          <button class="btn" id="btnApply">Apply</button>
+          <button class="btn btn--ghost" id="btnReset">Reset Data</button>
+        </div>
+      </div>
+
+      <div class="alert hidden" id="alertBox"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel__title">
+        <span>KPIs (Improvised)</span>
+        <span class="muted" id="kpiMeta">—</span>
+      </div>
+      <div class="kpi-grid" id="kpiGrid"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel__title">
+        <span>Charts</span>
+        <span class="muted">Trend + Pending % by Division + Scan Mix</span>
+      </div>
+
+      <div class="panel" style="margin-top:12px;">
+        <div class="muted" style="margin-bottom:8px;">Submission Trend</div>
+        <canvas id="trendChart"></canvas>
+      </div>
+
+      <div class="panel" style="margin-top:12px;">
+        <div class="muted" style="margin-bottom:8px;">Division Pending Scan % (Top 12)</div>
+        <canvas id="divisionChart"></canvas>
+      </div>
+
+      <div class="panel" style="margin-top:12px;">
+        <div class="muted" style="margin-bottom:8px;">Scan/Upload Status Mix</div>
+        <canvas id="scanChart"></canvas>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span class="line">© North Karnataka Region — KYC Tool</span>
+    <span class="line">Hosted on GitHub Pages • Domain: kyc.nkr-ka.in</span>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
 
