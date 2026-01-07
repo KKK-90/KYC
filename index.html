@@ -6,7 +6,8 @@
   <title>NKR-KA | KYC Dashboard</title>
   <link rel="stylesheet" href="assets/styles.css" />
 
-  <!-- OSS CDNs (static-site friendly) -->
+  <!-- OSS CDNs -->
+  <!-- IMPORTANT: Use SheetJS official CDN (more reliable than jsdelivr for some versions) -->
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
@@ -15,7 +16,7 @@
   <header class="topbar">
     <div class="brand">
       <div class="brand__title">NORTH KARNATAKA REGION</div>
-      <div class="brand__subtitle">KYC Monitoring Tool</div>
+      <div class="brand__subtitle">KYC Monitoring Tool (GitHub Pages)</div>
     </div>
 
     <div class="topbar__right">
@@ -33,6 +34,15 @@
 
       <div class="uploader">
         <input type="file" id="fileInput" accept=".xlsx,.xls" />
+
+        <!-- NEW: Standard template download -->
+        <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+          <button class="btn btn--ghost" id="btnDownloadTemplate">Download Standard Template</button>
+          <div class="muted" style="font-size:12px;">
+            Use this template to avoid header mismatch.
+          </div>
+        </div>
+
         <div class="uploader__help">
           Expected template headers are validated automatically. No data is uploaded anywhere — processing happens in your browser.
         </div>
@@ -191,4 +201,3 @@
   <script src="assets/app.js"></script>
 </body>
 </html>
-
