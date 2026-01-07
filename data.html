@@ -1,1 +1,92 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KYC | Data</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+</head>
+
+<body class="page" data-page="data">
+  <header class="topbar">
+    <div class="topbar__inner">
+      <div class="brand">
+        <div class="brand__title">NORTH KARNATAKA REGION</div>
+        <div class="brand__subtitle">Data View + Manual Entry</div>
+      </div>
+
+      <div class="nav">
+        <a href="upload.html">Upload</a>
+        <a href="dashboard.html">Dashboard</a>
+        <a href="actions.html">Action Items</a>
+        <a class="active" href="data.html">Data</a>
+        <span class="chip" id="dataChip">No data loaded</span>
+        <button class="btn btn--ghost btn--small" id="themeToggle">Light/Dark</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <div class="panel__title">
+        <span>Data Table</span>
+        <span class="muted" id="dataSummary">—</span>
+      </div>
+
+      <div class="table-tools">
+        <input class="search" id="dataSearch" placeholder="Search data..." />
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn" id="btnAddRow">Add Record</button>
+          <button class="btn btn--ghost" id="btnDownloadCsv">Download CSV</button>
+          <button class="btn btn--ghost" id="btnDownloadXlsx">Download XLSX</button>
+        </div>
+      </div>
+
+      <div class="scrollbar-top" id="dataTopScroll"><div class="scrollbar-inner" id="dataTopInner"></div></div>
+
+      <div class="table-wrap" id="dataWrap">
+        <table id="dataTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="muted" style="margin-top:10px; font-size:12px;">
+        Tip: Click a row to Edit/Delete (opens form).
+      </div>
+    </section>
+
+    <div class="alert hidden" id="alertBox"></div>
+
+    <div class="modal hidden" id="rowModal">
+      <div class="modal__card">
+        <div class="modal__head">
+          <div style="font-weight:900" id="modalTitle">Add Record</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="btn btn--ghost btn--small" id="btnModalClose">Close</button>
+          </div>
+        </div>
+
+        <div class="modal__grid" id="modalGrid"></div>
+
+        <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:12px; flex-wrap:wrap;">
+          <button class="btn btn--ghost" id="btnDeleteRow">Delete</button>
+          <button class="btn" id="btnSaveRow">Save</button>
+        </div>
+
+        <div class="muted" style="margin-top:10px; font-size:12px;">
+          Dates recommended: DD-MM-YYYY or DD/MM/YYYY. Scan/Upload status: Done / Pending.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <span class="line">© North Karnataka Region — KYC Tool</span>
+    <span class="line">Hosted on GitHub Pages • Domain: kyc.nkr-ka.in</span>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>
 
